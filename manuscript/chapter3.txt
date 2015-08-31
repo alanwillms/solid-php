@@ -1,0 +1,264 @@
+# PHP e o Princípio da Substituição de Liskov
+
+## Garantindo que instâncias de uma classe possam ser substituídas por instâncias de sub-classes sem quebrar o sistema.
+
+Agora veremos o terceiro princípio de SOLID, que é chamado de “Princípio da
+Substituição de Liskov”.
+
+Esse conceito foi criado em 1974 por Barbara Liskov, que o definiu como:
+
+> Se para cada objeto `O1` do tipo `S` existe um objeto `O2` do tipo `T` de tal
+  modo que para todos os programas `P` definidos em termos de `T`, o
+  comportamento de `P` não muda quando `O2` é substituído por `O1`, então `S`
+  é um subtipo de `T`.
+
+Essa definição é bastante técnica, mas Uncle Bob nos explica de uma forma mais
+simples:
+
+> Funções que usam ponteiros ou referências a classes-base devem ser capazes de
+  usar objetos de classes derivadas sem o saber.
+
+Ou seja, em qualquer lugar onde você usa uma instância de uma classe, você deve
+poder usar uma instância de uma sub-classe dela sem precisar alterar nada para
+que isso funcione:
+
+```php
+<?php
+class T { ... }
+class S extends T { ... }
+
+$o1 = new S;
+$o2 = new T;
+
+// aceita tanto $o1 quanto $o2,
+// pois S é um sub-tipo de T
+function programaP(T $objeto)
+{
+    return 'ok!';
+}
+
+programaP($o1); // ok!
+programaP($o2); // ok!
+?>
+```
+
+## Exemplos de Violações em PHP
+
+Quando você estende o comportamento de outra classe ou implementa uma interface,
+um método pode quebrar o Princípio da Substituição de Liskov de diversas
+maneiras.
+
+Vejamos alguns exemplos de violações:
+
+### Exigir que outro método seja chamado primeiro
+
+A subclasse pode precisar que você informe alguma dependência ou faça alguma
+configuração antes que o método possa ser chamado com sucesso. Como o sistema
+espera que o objeto simplesmente funcione, ele não sabe que precisa configurar
+dependências antes de utilizá-lo.
+
+```php
+<?php
+class Logger
+{
+    public function log($mensagem)
+    {
+        $this->append($mensagem);
+    }
+}
+
+class DatabaseLogger extends Logger // sub-classe
+{
+    public function log($mensagem) // sobrescreve o método Logger::log($mensagem)
+    {
+        $this->database->insert('log', ['message' => $mensagem]);
+    }
+}
+
+$fileLogger->log('Não foi possível enviar o pedido.');
+# true
+
+$databaseLogger->log('Não foi possível enviar o pedido.');
+# PHP Fatal error: Call to a member function insert() on a non-object
+?>
+```
+
+O problema nesse exemplo é que a instância de `DatabaseLogger` só funciona no
+lugar de `Logger` se o valor da propriedade `database` for informada antes do
+uso.
+
+### Lançar uma exceção inesperada
+
+Se o método na classe-mãe não lança uma exceção ou lança exceções somente de
+outros tipos, o código não saberá como tratá-la, e isso quebrará o sistema.
+
+```php
+<?php
+class Logger
+{
+    public function log($mensagem)
+    {
+        $this->append($mensagem);
+    }
+}
+
+class DatabaseLogger extends Logger // sub-classe
+{
+    public function log($mensagem) // sobrescreve o método Logger::log($mensagem)
+    {
+        if (empty($this->database) || !$this->database->isConnected()) {
+            throw new DbConnectionError; // exceção que não existe na classe-mãe
+        }
+        $this->database->insert('log', ['message' => $mensagem]);
+    }
+}
+
+$fileLogger->log('Não foi possível enviar o pedido.');
+# true
+$databaseLogger->log('Não foi possível enviar o pedido.');
+# PHP Warning: Uncaught exception 'DbConnectionError'
+?>
+```
+
+Neste segundo caso o sistema não espera uma exceção do tipo `DbConnectionError`,
+então quebrará sem tratar apropriadamente o erro.
+
+### Sobrescrever um método com um corpo vazio
+
+Essa é uma violação mais sutil, quando o método é sobrescrito, mas não faz nada.
+Se a subclasse não implementa o método, será que ela é mesmo uma especialização
+da classe-mãe?
+
+```php
+<?php
+class ContaGratuita extends Conta
+{
+    public function cobrar($valor)
+    {
+        // não faz nada
+    }
+}
+?>
+```
+
+Se o comportamento da sub-classe muda ao ponto de um método não executar nada,
+é provável que a hierarquia precisa ser refatorada para tratar dois casos
+distintos.
+
+### Retornar um valor de tipo diferente da classe mãe
+
+Todos os pontos em que o método é chamado no sistema, espera-se que ele retorne
+o mesmo tipo de dados. Se retornar um tipo inesperado, o sistema quebra.
+
+```php
+<?php
+class Autorizacao
+{
+    public function autorizar(Usuario $usuario, $acao)
+    {
+        return true;
+    }
+}
+
+class AutorizacaoApi extends Autorizacao
+{
+    public function autorizar(Usuario $usuario, $acao)
+    {
+        return ['ok' => false, 'status' => 404, 'message' => 'Not found'];
+    }
+}
+
+$autorizacao = new Autorizacao;
+$autorizacaoApi = new AutorizacaoApi;
+
+if ($autorizacao->autorizar($usuario, 'categories/create')) {
+    // autoriza se for true
+}
+
+if ($autorizacaoApi->autorizar($usuario, 'categories/create')) {
+    // também autoriza, mesmo quando não devia: 'ok' => false.
+}
+?>
+```
+
+O método `autorizar()` deveria respeitar o tipo de retorno da classe-mãe. A
+condição no final do código tem o comportamento oposto do esperado apenas porque
+o tipo de retorno é diferente.
+
+## Possíveis Soluções
+
+Às vezes a primeira solução à qual recorremos é verificar qual é o tipo do
+objeto e prepará-lo ou tratá-lo de acordo:
+
+```php
+<?php
+if ($this->logger instanceof DatabaseLogger) {
+    $this->logger->conectar();
+}
+
+$this->logger->log('Fatura enviada com sucesso!');
+?>
+```
+
+No entanto, *essa solução não é a ideal*. Ao fazer isso, violamos o segundo
+conceito do SOLID, o Princípio do Aberto/Fechado, pois dessa forma precisaríamos
+alterar o código existente para introduzir um novo comportamento.
+
+Como poderíamos resolver esse caso? Existem diversas maneiras, uma delas é fazer
+com que a classe receba as dependências no construtor e configure o que for
+necessário, desta forma o método `log()` sempre se comportará da maneira
+esperada:
+
+```php
+<?php
+class DatabaseLogger extends Logger
+{
+    public function __construct(..., Database $database)
+    {
+        parent::__construct(...);
+        $this->database = $database;
+        if (!$this->database->isConnected()) {
+            $this->database->connect();
+        }
+    }
+}
+?>
+```
+
+Existe um pouco de polêmica quanto aos [construtores violarem ou não](http://www.sitepoint.com/constructors-and-the-myth-of-breaking-the-lsp/)
+o Princípio da Substituição de Liskov, mas perceba como essa solução é vantajosa
+ao utilizar um serviço de injeção de dependência.
+
+## Conclusão
+
+Este princípio é um pouco mais complexo do que os dois primeiros, mas nos ajuda
+a evitar surpresas desagradáveis com polimorfismo.
+
+Não existe uma solução “bala de prata” para todos os casos, pois muitas vezes é
+necessário mudar a forma de abstração do problema, e cada caso é diferente.
+No entanto, talvez essas duas sugestões possam ajudar a resolver o problema:
+
+* injetar as dependências e configurar no construtor ao invés de esperar que um
+  `setter` ou um método seja chamado para preparar o objeto;
+
+* esperar interfaces ao invés de classes, assim você pode dividir melhor a sua
+  hierarquia de classes e quem sabe implementar mais de uma interface para
+  satisfazer todos os casos.
+
+No próximo capítulo veremos mais sobre isso, ao abordar o Princípio da Segregação
+de Interfaces.
+
+## Referências
+
+* [The Principles of OOD](http://butunclebob.com/ArticleS.UncleBob.PrinciplesOfOod),
+  por Robert Martin.
+
+* [SOLID Class Design: The Liskov Substitution Principle](http://www.tomdalling.com/blog/software-design/solid-class-design-the-liskov-substitution-principle/),
+  por Tom Dalling
+
+* [Liskov Substitution](https://laracasts.com/lessons/liskov-substituion-principle),
+  Laracasts
+
+* [Liskov Substitution Principle](https://upcase.com/videos/liskov-substitution-principle),
+  Upcase
+
