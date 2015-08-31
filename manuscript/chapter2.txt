@@ -1,0 +1,230 @@
+# PHP e o Princípio do Aberto/Fechado
+
+## Como manter classes abertas para extensão e fechadas para modificação.
+
+No capítulo anterior vimos que uma classe só deveria ter uma única
+responsabilidade ou um único motivo para mudar. Hoje veremos a segunda
+recomendação do SOLID, chamada de “Princípio do Aberto/Fechado”.
+
+[Uncle Bob](https://pt.wikipedia.org/wiki/Robert_Cecil_Martin) pegou esse
+conceito emprestado de [Bertrand Meyer](https://en.wikipedia.org/wiki/Bertrand_Meyer),
+que o define da seguinte maneira:
+
+> Entidades de software (classes, módulos, funções, etc.) devem ser *abertas*
+  para extensão, mas *fechadas* para modificação.
+
+Em outras palavras, isso significa que:
+
+1. O *comportamento deve estar aberto* para mudanças, para atender a novos
+   requisitos do software.
+
+2. No entanto, o *código fonte deve estar fechado* para alteração, ou seja, não
+   deveria ser tocado para introduzir esses novos comportamentos.
+
+Além de facilitar a introdução de novos comportamentos, a vantagem é que se você
+não altera uma entidade existente, você diminui as chances de introduzir novos
+_bugs_ nela. Mesmo que você tenha uma cobertura total de testes, ainda podem
+existir [casos que os testes não cobrem](https://www.wikiwand.com/en/Mutation_testing).
+
+## Exemplo: Calculando Impostos
+
+Suponha que mantemos o sistema de uma rede de farmácias. Para tornar o exemplo
+mais simples, estamos em um Brasil hipotético em que o governo resolveu
+simplificar o sistema tributário.
+
+A rede quer saber exatamente quanto cada farmácia paga para o governo todos os
+anos, então o sistema precisa calcular os impostos pagos em cima dos produtos
+vendidos (remédios, cosméticos, produtos de higiene, etc.) e dos serviços
+prestados (aplicação de injeção, curativos, etc.).
+
+Nesse sistema tributário simplificado, tudo que se paga hoje é o ICMS sobre os
+produtos vendidos e o ISS sobre os serviços prestados:
+
+```php
+<?php
+class Impostometro
+{
+    ...
+
+    /**
+     * Adiciona o valor dos impostos de um item
+     * @param mixed $item
+     * @return void
+     */
+    public function somar($item)
+    {
+        if ($item instanceof Produto) {
+            $this->valor_impostos += $item->getValorICMS();
+        } elseif ($item instanceof Servico) {
+            $this->valor_impostos += $item->getValorISS();
+        } else {
+            throw new NotImplementedException('Não é possível calcular os impostos de "' . $item::CLASS . '"');
+        }
+    }
+}
+?>
+```
+
+Um belo dia o dono da rede de farmácias anuncia um grande contrato com um
+fornecedor europeu, e que começará a importar cosméticos estrangeiros.
+
+Infelizmente esse Brasil hipotético ainda cobra impostos sobre mercadoria
+importada, então precisamos atualizar o nosso sistema para incluir esse novo
+comportamento:
+
+```php
+<?php
+class ProdutoImportado extends Produto
+{
+    ...
+}
+
+class Impostometro
+{
+    ...
+
+    /**
+     * Adiciona o valor dos impostos de um item
+     * @param mixed $item
+     * @return void
+     */
+    public function somar($item)
+    {
+        if ($item instanceof Produto) {
+            $this->valor_impostos += $item->getValorICMS();
+            if ($item instanceof ProdutoImportado) {
+                $this->valor_impostos += $item->getValorII();
+            }
+        } elseif ($item instanceof Servico) {
+            $this->valor_impostos += $item->getValorISS();
+        } else {
+            throw new NotImplementedException('Não é possível calcular os impostos de "' . $item::CLASS . '"');
+        }
+    }
+}
+?>
+```
+
+Imediatamente percebemos que há algo de errado. Além de criar uma nova classe
+para tratar das regras de negócio de um produto importado, tivemos que mexer
+também na classe do impostômetro. Essa classe nunca precisou ser alterada antes!
+
+Uma semana depois, recebemos um memorando anunciando que estava sendo
+estabelecida uma parceria com a Argentina para a exportação de medicamentos
+manipulados, ou seja, em breve também pagaremos o IE (imposto sobre exportação).
+Boas notícias para a rede, más notícias para nós, pois agora precisamos alterar
+o impostômetro novamente!
+
+Como descobrimos o Princípio do Aberto/Fechado, resolvemos nos preparar para a
+nova mudança e refatorar nossas classes seguindo o _design pattern_ [_Stategy_](https://github.com/domnikl/DesignPatternsPHP/tree/master/Behavioral/Strategy):
+
+```php
+<?php
+interface Tributavel
+{
+    /**
+     * Calcula o valor dos impostos que incidem sobre esta entidade.
+     * @return float
+     */
+    abstract public function getValorImpostos();
+}
+class Servico implements Tributavel
+{
+    ...
+
+    public function getValorImpostos()
+    {
+        return $this->getValorISS();
+    }
+}
+class Produto implements Tributavel
+{
+    ...
+
+    public function getValorImpostos()
+    {
+        return $this->getValorICMS();
+    }
+}
+class ProdutoImportado extends Produto
+{
+    ...
+
+    public function getValorImpostos()
+    {
+        return parent::getValorImpostos() + $this->getValorII();
+    }
+}
+class Impostometro
+{
+    ...
+
+    /**
+     * Adiciona o valor dos impostos de um item
+     * @param Tributavel $item
+     * @return void
+     */
+    public function somar(Tributavel $item)
+    {
+        $this->valor_impostos += $item->getValorImpostos();
+    }
+}
+?>
+```
+
+Ótimo! Nossa classe de impostômetro ficou muito mais limpa! Agora será muito
+mais fácil *adicionar o novo comportamento* dos produtos exportados
+*sem alterar as classes existentes*:
+
+```php
+<?php
+class ProdutoExportado extends Produto
+{
+    ...
+
+    public function getValorImpostos()
+    {
+        return parent::getValorImpostos() + $this->getValorIE();
+    }
+}
+?>
+```
+
+Agora a classe do impostômetro não precisa mais saber quais métodos chamar para
+somar os impostos. Ela pode receber qualquer novo item que seja criado no futuro
+e, desde que ele implementa a interface, ela será capaz de somar os impostos
+adequadamente.
+
+## Detectando Violações com Ferramentas
+
+Um dos principais sintomas de que sua classe não está aberta para extensão e
+fechada para modificação é quando você tem um mesmo conjunto de condições
+`switch` ou `if` que se repete em vários lugares da aplicação, como um teste
+verificando qual é o "tipo", "nível", "status", etc., de uma entidade.
+
+Para detectar códigos esses conjuntos de condições, você pode executar o
+[PHP Mess Detector](http://phpmd.org/) e prestar atenção às classes e métodos
+com [alta complexidade ciclomática](http://phpmd.org/rules/codesize.html#cyclomaticcomplexity).
+Se você ver um bloco semelhante de condições `if`/`switch` se repetindo o tempo
+todo em vários lugares, é provável que você pode refatorar seguindo o princípio
+do aberto/fechado.
+
+## Conclusão
+
+Esse princípio é ótimo para manter o código fácil de alterar, mas evite cair na
+síndrome da bola de cristal, implementando prematuramente uma abstração só
+porque acha que _talvez_ ela seja necessária um dia. Pode ser que você nunca
+precise dela.
+
+Uma dica é só implementar a abstração quando realmente surge uma segunda
+extensão do comportamento original. Como você não fez isso antes, você terá o
+trabalho de refatorar o código para criar a abstração que não foi feita no
+começo, mas desta forma você evita adicionar mais complexidade do que o
+necessário.
+
+## Referências
+* [The Principles of OOD](http://butunclebob.com/ArticleS.UncleBob.PrinciplesOfOod),
+  por Robert Martin.
+
+* [Open/Closed Principle](http://c2.com/cgi/wiki?OpenClosedPrinciple), por
+  Cunningham & Cunningham.
