@@ -1,0 +1,141 @@
+# PHP e o Princípio da Responsabilidade Única
+
+O primeiro dos cinco princípios que compõe o SOLID, um conjunto de boas práticas de design orientado a objetos de Robert Martin (Uncle Bob).
+
+> _Uma classe só deveria ter um motivo para mudar_ — Uncle Bob
+
+Segundo Bob, isso significa que uma classe só deveria ter um eixo de mudança.
+“Motivo para mudar”, “eixo de mudança”, esses termos não ajudam muito, não é?
+
+Existe uma maneira mais fácil de pensar nisso: apenas leia a sua classe e
+escreva uma lista de tudo o que ela faz. Se a sua lista tiver mais do que um
+único item, quer dizer que a sua classe tem mais do que uma responsabilidade.
+
+## Exemplos em PHP
+
+Neste primeiro exemplo temos uma classe “Pedido”, que implementa o padrão
+[ActiveRecord](http://www.martinfowler.com/eaaCatalog/activeRecord.html). Não
+entrarei na discussão sobre o uso de ActiveRecord _versus_ o uso de
+[Repositórios](http://martinfowler.com/eaaCatalog/repository.html) segundo o
+[Domain-Driven Design](http://martinfowler.com/tags/domain%20driven%20design.html),
+então apenas assuma que a classe herda métodos para persistência de dados de sua
+classe-mãe.
+
+```php
+<?php
+class Pedido extends ActiveRecord
+{
+    // ...
+
+    /**
+     * Encontra todos os pedidos que possuem o status de cancelado.
+     * @return Pedido[]
+     */
+    public static function getCancelados() { ... }
+
+    /**
+     * Soma o valor total de cada item do pedido.
+     * @return float
+     */
+    public function getValorTotal() { ... }
+
+    /**
+     * Soma o valor total de cada item e formata o resultado.
+     * @return string
+     */
+    public function getValorTotalFormatado() { ... }
+}
+?>
+```
+
+Nessa classe encontramos vários motivos para mudança, ou várias responsabilidades:
+
+1. O método `getCancelados()` pode deixar de funcionar se o esquema, o adaptador
+   ou o banco de dados em si mudar — esse método tem a responsabilidade de
+   recuperar dados persistidos.
+
+2. O método `getValorTotal()` talvez seja alterado se a regra de negócio mudar,
+   se um único item puder ser cancelado, ou o cálculo do desconto não for mais
+   ou mesmo — a responsabilidade principal é calcular o valor total pedido.
+
+3. O método `getValorTotalFormatado()` pode mudar se introduzirem outros idiomas
+   ou outras moedas, se optarem por usar tags HTML, ou mesmo se o cliente quiser
+   outra forma de representação — esse método tem a responsabilidade de
+   representar um valor monetário.
+
+Desses métodos todos, percebemos que apenas um está relacionado à
+responsabilidade principal da classe. Os outros poderiam ser extraídos para
+outras classes. `getCancelados()` poderia ser um repositório ou uma classe de
+_query_; e `getValorTotalFormatado()` é responsabilidade da Visão da aplicação,
+desta forma sua lógica estaria em algum _helper_.
+
+Mesmo que a classe tenha uma responsabilidade única, pode ser que um método
+tenha várias. Por exemplo:
+
+```php
+<?php
+class Notificacao
+{
+    /**
+     * Envia esta notificação por e-mail se o destinatário for válido.
+     * @return boolean se a mensagem foi enviada com sucesso.
+     */
+    public function enviar()
+    {
+        if (!$this->destinatario || !preg_match(EMAIL_REGEX, $this->destinatario)) {
+            return false;
+        }
+
+        $mensagem = $this->mensagem . "\n\Enviada por ACME® Messenger";
+
+        return mail($this->destinatario, $this->assunto, $mensagem);
+    }
+}
+?>
+```
+
+Verificamos que o método acima tem três responsabilidades:
+
+1. Validar se o destinatário possui um endereço de e-mail válido;
+
+2. Acrescentar um rodapé à mensagem enviada;
+
+3. Enviar a mensagem.
+
+Para resolver o problema, poderíamos extrair alguns métodos privados (como por
+exemplo para obter a mensagem completa) ou até mesmo classes inteiras (para
+validação de endereços de e-mails e um serviço para o envio).
+
+## Detectando Violações Automaticamente
+
+Depois de conhecer esse princípio, sempre tomamos cuidado ao escrever novas
+classes e métodos, mas e quanto ao código legado? Existe uma maneira de varrer
+todo o repositório em busca de classes ou métodos com muitas responsabilidades?
+
+Uma dica é utilizar um
+[script de detecção de _churn_](https://github.com/garybernhardt/dotfiles/blob/master/bin/git-churn).
+_Churn_ é a quantidade de vezes em que um arquivo é alterado ao longo do tempo,
+com base nos _commits_ de um repositório. Se uma classe só deve ter um motivo
+para mudança, é possível que os arquivos mais alterados do seu repositório
+sejam de classes com mais de uma responsabilidade.
+
+Outra opção é usar o popular [PHPMD](http://phpmd.org/) (_PHP Mess Detector_)
+para descobrir as classes e métodos que extrapolam uma determinada quantidade de
+linhas de código. Quanto maior o código, maior a possibilidade da classe ou
+método estar fazendo coisas demais, quebrando o princípio da responsabilidade
+única.
+
+Essas ferramentas ajudam bastante, mas não confie cegamente nelas. Pode ser que
+você receba um falso positivo ou que alguma coisa simplesmente passe
+despercebida. Use sempre o bom senso.
+
+## Referências
+
+* [The Principles of OOD](http://butunclebob.com/ArticleS.UncleBob.PrinciplesOfOod),
+  por Robert Martin.
+
+* [Single Responsibility Principle](https://upcase.com/videos/single-responsibility-principle),
+  por Upcase.
+
+* [Single Responsibility Principle](http://c2.com/cgi/wiki?SingleResponsibilityPrinciple),
+  por Cunningham & Cunningham.
