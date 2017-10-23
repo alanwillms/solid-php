@@ -1,0 +1,287 @@
+# PHP e o Princípio da Segregação de Interfaces
+
+## Várias interfaces específicas são melhores do que uma única interface genérica.
+
+O Princípio da Segregação de Interfaces é a quarta boa prática de programação que forma o SOLID. A recomendação diz que:
+
+> “Clientes não devem ser forçados a depender de interfaces que eles não usam.”
+
+Esses clientes não são os seres humanos que utilizam o software final, mas sim
+os algoritmos que dependem da interface de alguma outra classe. Por exemplo,
+quando nosso script conecta numa base utilizando a biblioteca PDO do PHP, esse
+nosso script é o cliente que consome a interface da classe PDO.
+
+Além disso, Robert Martin não se refere *apenas* àquelas interfaces que criamos
+com a palavra-chave `interface` no PHP, mas sim ao conjunto de todos os métodos
+públicos de uma classe.
+
+Quanto mais métodos podemos invocar, maior é a interface que pode ser consumida
+por outras classes e mais “gorda” a interface é.
+
+## Sintomas de Sobrepeso
+
+Quando uma interface tem métodos demais, diz-se que é uma interface gorda, mas
+essa quantidade não precisa ser grande. O sobrepeso atinge até interfaces de
+poucos métodos.
+
+Podemos descobrir uma classe com interface gorda através de pequenos sintomas:
+
+* existem métodos públicos que só são usados internamente, mas nunca são
+  invocados de fora da classe;
+* existem métodos que não são usados nem dentro e nem fora da classe;
+* uma parte dos métodos é chamada com frequência em um ponto do sistema, e outra
+  parte é chamada em outro ponto.
+
+Classes assim são fortes candidatos para terem a interface revisada.
+
+## Interfaces Gordas em Classes
+
+No código abaixo a classe `EstoqueProduto` possui três métodos públicos, mas a
+classe `DemonstrativoContabilidade` só invoca um deles:
+
+```php
+<?php
+class EstoqueProduto
+{
+    ...
+    public function retirar($quantidade) { ... }
+    public function depositar($quantidade) { ... }
+    public function getValor() { ... }
+    ...
+}
+
+class DemonstrativoContabilidade
+{
+    public function getPatrimonioLiquido()
+    {
+        ...
+        foreach ($estoques as $estoque) {
+            $patrimonio += $estoque->getValor(); // EstoqueProduto::getValor
+        }
+        ...
+    }
+}
+?>
+```
+
+Por outro lado, a classe `ControleLogistica` depende dos métodos
+`EstoqueProduto#depositar()` e `EstoqueProduto#retirar()`, mas não usa
+`EstoqueProduto#getValor()`.
+
+Esses dois clientes (`DemonstrativoContabilidade` e `ControleLogistica`)
+consomem partes diferentes da interface da classe `EstoqueProduto`:
+
+```php
+<?php
+class EstoqueProduto
+{
+    ...
+    public function retirar($quantidade) { ... }
+    public function depositar($quantidade) { ... }
+    public function getValor() { ... }
+    ...
+}
+
+class ControleLogistica
+{
+    public function entrada(Fonecimento $fornecimento)
+    {
+        ....
+        $estoque->depositar($quantidade); // EstoqueProduto::depositar
+        ...
+    }
+
+    public function saida(Pedido $pedido)
+    {
+        ....
+        $estoque->depositar($quantidade); // EstoqueProduto::retirar
+        ...
+    }
+}
+
+class DemonstrativoContabilidade
+{
+    public function getPatrimonioLiquido()
+    {
+        ...
+        foreach ($estoques as $estoque) {
+            $patrimonio += $estoque->getValor(); // EstoqueProduto::getValor
+        }
+        ...
+    }
+}
+?>
+```
+
+Quando um dos clientes força a necessidade de uma mudança na classe
+EstoqueProduto, todos os outros clientes são afetados pela alteração,
+até mesmo quem não precisa do novo comportamento. Existe um forte acoplamento
+entre todos os clientes da classe gorda.
+
+O que o Princípio da Segregação de Interfaces afirma é que eu não deveria ser
+forçado a depender de toda essa interface, mas só da parte que eu utilizo.
+
+Como diz Uncle Bob:
+
+> “Várias interfaces específicas são melhores do que uma única interface genérica.”
+
+Seguindo a dica dele, a interface gorda dessa classe pode ser segregada em
+interfaces menores, específicas para cada necessidade de cada cliente.
+
+No nosso exemplo, a classe `ControleLogistica` só precisa retirar e depositar
+estoque, enquanto a classe `DemonstrativoContabilidade` só precisa saber o valor
+desse estoque. Podemos extrair duas interfaces, `Estocavel` e `Valoravel`:
+
+```php
+<?php
+interface Estocavel
+{
+    public function retirar($quantidade);
+    public function depositar($quantidade);
+}
+
+interface Valoravel
+{
+    public function getValor();
+}
+
+class EstoqueProduto implements Estocavel, Valoravel
+{
+    ...
+}
+?>
+```
+
+## Interfaces Gordas
+
+Interfaces gordas não são um problema apenas de classes, o problema também é
+comum nas interfaces do PHP. Considere o exemplo a seguir, adaptado a partir
+do Yii Framework versão 2.0.10:
+
+```php
+<?php
+interface Identificavel
+{
+    public static function encontrarIdentidade($id);
+    public static function encontrarIdentidadePeloToken($token, $tipo = null);
+    public function getId();
+    public function getChaveAutenticacao();
+    public function validarChaveAutenticacao($chaveAutenticacao);
+}
+?>
+```
+Essa interface permite que o programador prepare o sistema de autenticação do
+Yii simplesmente fazendo com que algum modelo ActiveRecord implemente a
+interface `Identificavel`:
+
+```php
+<?php
+class Usuario extends ActiveRecord implements Identificavel
+{
+    public static function encontrarIdentidade($id)
+    {
+        return static::findOne($id);
+    }
+
+    public static function encontrarIdentidadePeloToken($token, $tipo = null)
+    {
+        return static::findOne(['token' => $token]);
+    }
+
+    public function getId()
+    {
+        return $this->id;
+    }
+
+    public function getChaveAutenticacao()
+    {
+        return $this->chaveAutenticacao;
+    }
+
+    public function validarChaveAutenticacao($chaveAutenticacao)
+    {
+        return $this->chaveAutenticacao === $chaveAutenticacao;
+    }
+}
+?>
+```
+
+O problema é que essa interface assume que você sempre terá duas formas de
+autenticação:
+
+1. Autenticação via usuário e senha (aplicações tradicionais)
+2. Autenticação via token (APIs)
+
+Mas o que acontece se eu só quero usar a autenticação via token? Nesse caso, ou
+você implemente toda a interface como no primeiro exemplo, ou você faz uma
+gambiarra feia como essa:
+
+```php
+<?php
+class Usuario extends ActiveRecord implements Identificavel
+{
+    ...
+
+    public function getChaveAutenticacao()
+    {
+        throw new NaoImplementadoException(); // :-(
+    }
+
+    public function validarChaveAutenticacao($chaveAutenticacao)
+    {
+        throw new NaoImplementadoException(); // :-(
+    }
+}
+?>
+```
+
+Podemos resolver o problema através da segregação da interface `Identificavel`,
+onde cada parte será responsável por um tipo de autenticação:
+
+```php
+<?php
+interface IdentificavelPorChaveDeAutenticacao
+{
+    public static function encontrarIdentidade($id);
+    public function getId();
+    public function getChaveAutenticacao();
+    public function validarChaveAutenticacao($chaveAutenticacao);
+}
+
+interface IdentificavelPorToken
+{
+    public static function encontrarIdentidadePeloToken($token, $tipo = null);
+}
+?>
+```
+---
+
+Existem diversas maneiras de resolver o problema da interface gorda, cabe a você
+analisar cada caso e ver o que é melhor:
+
+* criar interfaces do PHP, fazer com que a classe as implemente e depois
+  depender das interfaces no cliente
+* dividir a classe em duas, pois pode haver responsabilidade demais (vide o
+  Princípio da Responsabilidade Única)
+* se dividir a classe em duas, verificar se deve usar composição ou herança para
+  resolver da melhor forma o problema
+
+## Conclusão
+
+Uma das maneiras de detectar classes com interface gorda e candidatas a
+segregação é rodar o PHP Mess Detector e verificar as classes que possuem um
+número muito grande de métodos. Por padrão o PHPMD acusa classes com mais de 25
+métodos, mas você pode reduzir essa quantidade para encontrar mais classes.
+
+Para refatorar, o primeiro passo é tornar privados ou protegidos todos os
+métodos que não são e nem devem ser chamados por classes externas. Isso evita
+bastante transtorno quando alguém invoca um método que não foi criado para ser
+chamado por outras classes.
+
+Depois disso, você pode utilizar o PHP Metrics ou o PHP Dependency Analysis
+para avaliar as dependências entre as classes e entender quais são os métodos
+utilizados pelos clientes de uma classe, avaliando se é possível e viável
+segregar uma interface em duas ou mais.
+
+Não custa nada repetir: é importante sempre usar o bom senso para não tornar o
+código mais complexo do que ele precisa ser.
